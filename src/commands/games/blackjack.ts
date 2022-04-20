@@ -17,6 +17,8 @@ interface IGamePlayers{
 interface IGame{
     started: boolean;
     pickedCards: ICard[];
+    turnOf: string | null;
+    winners: string[];
     players: {
         [key:string]:IGamePlayers
     };
@@ -25,6 +27,7 @@ interface IGame{
 
 const cardsValue: string[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Q", "J", "K"];
 const types: string[] = ["♣", "♠", "♦", "♥"];
+
 function generateCards(vals: string[], types: string[]): ICard[]{
     const used: ICard[] = [];
     for(let type of types){
@@ -34,6 +37,8 @@ function generateCards(vals: string[], types: string[]): ICard[]{
     }
     return used;
 }
+const cardsPack: ICard[] = generateCards(cardsValue, types);
+
 function choose(arr: Array<any>){
     const i = Math.floor(Math.random()*arr.length-1);
 
@@ -41,10 +46,15 @@ function choose(arr: Array<any>){
     return chosen;
 }
 
+/**
+ * @param cards: ICard[] - array containing the cards possessed.
+ * @description calculate the value of the hand.
+ */
 function cardValue(cards: ICard[]){
     let total = 0;
 
     cards.map(card=>{
+        if(!card) return;
         const index = cardsValue.indexOf(card.value);
         const val = (index + 1 >= 10)? 10 : index+1;
 
@@ -65,22 +75,27 @@ function pickCard(cards: ICard[], game: IGame): ICard{
 }
 
 // embeds
-function updateEmbed(game: IGame, message: Message): MessageEmbed{
+function updateEmbed(game: IGame, message: Message, gameOver: boolean = false): MessageEmbed{
     const embed = new MessageEmbed();
     embed.author = {name: `Blackack do ${message.author.username}`, iconURL: `${message.author.avatarURL()}`};
-    // const {playerCards, dealerCards} = game;
-    // const playerCardsRender: string[] = [];
-    // const dealerCardsRender: string[] = [];
     // playerCards.map(card =>{
     //     playerCardsRender.push(`\`${card.type}${card.value}\``);
     // });
     // dealerCards.map(card=>{
     //     dealerCardsRender.push(`\`${card.type}${card.value}\``);
     // });
-    // game.playerScore = cardValue(playerCards);
-    // game.dealerScore = cardValue(dealerCards);
-    // embed.addField("Player", `cards - ${playerCardsRender.join(" ")} \nTotal - \`${game.playerScore}\``);
-    // embed.addField("Dealer", `cards - ${dealerCardsRender.join(" ")} \nTotal - \`${game.dealerScore}\``, true);
+    if(gameOver){
+        embed.setDescription("Game Over! Round winners: "+game.winners.join(", "));
+    }else{
+        embed.setDescription("Turn of: "+game.players[`${game.turnOf}`].username);
+    }
+    for(let p in game.players){
+        const player = game.players[p];
+        const playerCardsRender: string[] = [];
+        player.cards.map(c => playerCardsRender.push(`${c.type}${c.value}`)); 
+        const sufix: string = (player.busted)?"(Estourou)":"";
+        embed.addField(player.username+sufix, `cards - ${playerCardsRender.join(" ")} \nTotal - \`${player.score}\``);
+    }
 
     return embed;
 }
@@ -100,19 +115,89 @@ function preStartEmbed(game: IGame, message: Message): MessageEmbed{
     return embed;
 }
 
-function hit(cards: ICard[], game: IGame, player: string | undefined = undefined){
-    
+function start(game: IGame, timer: NodeJS.Timer){
+    clearInterval(timer);
+
+    // first round
+    for(let p in game.players){
+        const player = game.players[p];
+        const cardsToGive = (player.dealer)? 1: 2;
+
+        for(let i = 0; i < cardsToGive; i++){
+            const card = pickCard(cardsPack, game);
+            game.pickedCards.push(card);
+            player.cards.push(card);
+        }
+
+        console.log("Player cards: ", player.cards);
+        player.score = cardValue(player.cards);
+        if(!player.dealer && game.turnOf == null){
+            game.turnOf = p;
+        }
+    }
+}
+
+function hit(game: IGame){
+    const player = game.players[`${game.turnOf}`];
+    const { cards } = player;
+
+    const card = pickCard(cardsPack, game);
+    game.pickedCards.push(card);
+    cards.push(card);
+
+    player.score = cardValue(cards);
+}
+
+function setTurnToNext(game: IGame): boolean{
+    for(let p in game.players){
+        const player = game.players[p];
+        if(game.turnOf == p || player.stoped || player.busted) continue;
+
+        game.turnOf = p;
+    }
+
+    const next = game.players[`${game.turnOf}`];
+    if(next.dealer){
+        while(next.score < 17){
+            hit(game);
+            if(next.score > 21){
+                next.busted = true;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+function calculateFinalResults(game: IGame): string[]{
+    const winners: string[] = [];
+    const findDealer = () => {
+        for(let p in game.players){
+            const player = game.players[p];
+            if(player.dealer) return player;
+        }
+    };
+    const dealer = findDealer();
+
+    for(let p in game.players){
+        const player = game.players[p];
+        if(!dealer || player.busted) continue;
+        if(dealer.busted && player.score <= 21 || player.score >= dealer.score && !dealer.busted || player.score == 21){
+            winners.push(player.username);
+        }
+    }
+
+    return winners;
 }
 
 async function execution({ message }:ICommandParams){
 
     // game variables init
-    const cards: ICard[] = generateCards(cardsValue, types);
-    const card = <ICard>choose(cards);
     let embed = new MessageEmbed();
     let components: MessageActionRow;
     let status: string = "Aguardando jogadores";
     let startTimer = 30000;
+    let gameOver: boolean;
 
     const timer = setInterval(()=>{
         startTimer -= 1000;
@@ -125,7 +210,9 @@ async function execution({ message }:ICommandParams){
     const game: IGame = {
         pickedCards: [],
         players: {},
-        started: false
+        started: false,
+        turnOf: null,
+        winners: []
     };
 
     game.players["dealer"] = {
@@ -176,7 +263,7 @@ async function execution({ message }:ICommandParams){
     const msg = await message.channel.send({ content: "Aguardando jogadores...", embeds: [embed], components: [components] });
     const collector = msg.createMessageComponentCollector({
         componentType: "BUTTON",
-        time: 30000
+        time: 120000
     });
 
     collector.on("collect", interaction=>{
@@ -185,35 +272,42 @@ async function execution({ message }:ICommandParams){
         };
         const interactions: IInteractions= {
             "bj_hit": function(){
-                hit(cards, game);
-                embed = updateEmbed(game, message);
+                if(interaction.user.id != game.turnOf) return;
+                hit(game);
                 // check game over
                 if(game.players[interaction.user.id].score > 21){
-                    gameButtonsRow.components.map(comp=>comp.setDisabled(true));
-                    components = gameButtonsRow;
-                    status = "Fim de Jogo."
+                    game.players[interaction.user.id].busted = true;
+                    gameOver = setTurnToNext(game);
                 }
+                embed = updateEmbed(game, message);
             },
             "bj_start": function(){
                 if(interaction?.user?.id != message.author.id) return;
 
                 game.started = true;
+                start(game, timer);
                 embed = updateEmbed(game, message);
                 components = gameButtonsRow;
                 status = "Jogo iniciado."
             },
             "bj_stand": function(){
-                interaction?.channel?.send("Player esperou!");
+                if(interaction.user.id != game.turnOf) return;
+                // check game over
+                game.players[interaction.user.id].stoped = true;
+                gameOver = setTurnToNext(game);
+                embed = updateEmbed(game, message);
             },
             "bj_cancel": function(){
-                interaction?.channel?.send("Player largou de mao!");
+                if(interaction.user.id != message.author.id) return;
+                status = "Jogo cancelado";
+                gameButtonsRow.components.map(c=>c.disabled=true);
+                components = gameButtonsRow;
             },
             "bj_join": async function(){
                 if(interaction?.user?.id == message.author.id || game.players[interaction?.user?.id]){  
-                    if(interaction.replied){
-                        return await interaction?.followUp({ content: "Voce ja esta no jogo!", ephemeral: true });
+                    if(!interaction.replied){
+                        return;
                     }
-                    await interaction.reply({ content: "Voce ja esta no jogo!", ephemeral: true });
                 }
 
                 game.players[interaction?.user?.id] = {
@@ -234,6 +328,14 @@ async function execution({ message }:ICommandParams){
 
         const interactionExecution = interactions[interaction.customId];
         interactionExecution();
+        collector.resetTimer();
+        if(gameOver){
+            status = "Fim de jogo.";
+            gameButtonsRow.components.map(c=>c.disabled=true);
+            components = gameButtonsRow;
+            game.winners = calculateFinalResults(game);
+            embed = updateEmbed(game, message, gameOver);
+        }
         interaction.update({ content: status, embeds: [embed], components: [components]  });
     });
     collector.on("end", interaction=>{

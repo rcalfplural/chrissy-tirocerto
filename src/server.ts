@@ -14,7 +14,7 @@ client.on("ready", c=>{
     console.log("Chrissy Tiro certo pronto pro jogo.");
 });
 
-client.on("messageCreate", (message)=>{
+client.on("messageCreate", async (message)=>{
     const messageParts = message.content.split(" ");
     if(message.author.bot || messageParts.shift()?.toLocaleLowerCase() != prefix) return;
     const commandId = messageParts.shift();
@@ -22,5 +22,11 @@ client.on("messageCreate", (message)=>{
     
     if(!command) return;
 
-    command.execution({ args: messageParts, client, message });
+    try{
+        command.execution({ args: messageParts, client, message });
+    }catch(err: any){
+        console.error(err);
+        await message.reply("Deu erro la meu querido");
+        return;
+    }
 });
