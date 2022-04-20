@@ -40,9 +40,10 @@ function generateCards(vals: string[], types: string[]): ICard[]{
 const cardsPack: ICard[] = generateCards(cardsValue, types);
 
 function choose(arr: Array<any>){
-    const i = Math.floor(Math.random()*arr.length-1);
+    const i = Math.floor(Math.random()*arr.length);
 
-    const chosen = arr[i]
+    const chosen = arr[i];
+    console.log(chosen, i);
     return chosen;
 }
 
@@ -54,7 +55,6 @@ function cardValue(cards: ICard[]){
     let total = 0;
 
     cards.map(card=>{
-        if(!card) return;
         const index = cardsValue.indexOf(card.value);
         const val = (index + 1 >= 10)? 10 : index+1;
 
@@ -304,6 +304,7 @@ async function execution({ message }:ICommandParams){
                 components = gameButtonsRow;
             },
             "bj_join": async function(){
+                if(game.started) return;
                 if(interaction?.user?.id == message.author.id || game.players[interaction?.user?.id]){  
                     if(!interaction.replied){
                         return;
