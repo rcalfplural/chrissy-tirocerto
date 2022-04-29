@@ -1,4 +1,4 @@
-import { MessageEmbed, MessageActionRow, MessageButton, Message } from "discord.js";
+import { MessageEmbed, MessageActionRow, MessageButton, Message, ButtonInteraction } from "discord.js";
 import { ICommand, ICommandParams } from "../../definitions";
 
 interface ICard{
@@ -43,7 +43,6 @@ function choose(arr: Array<any>){
     const i = Math.floor(Math.random()*arr.length);
 
     const chosen = arr[i];
-    console.log(chosen, i);
     return chosen;
 }
 
@@ -78,21 +77,16 @@ function pickCard(cards: ICard[], game: IGame): ICard{
 function updateEmbed(game: IGame, message: Message, gameOver: boolean = false): MessageEmbed{
     const embed = new MessageEmbed();
     embed.author = {name: `Blackack do ${message.author.username}`, iconURL: `${message.author.avatarURL()}`};
-    // playerCards.map(card =>{
-    //     playerCardsRender.push(`\`${card.type}${card.value}\``);
-    // });
-    // dealerCards.map(card=>{
-    //     dealerCardsRender.push(`\`${card.type}${card.value}\``);
-    // });
+    
     if(gameOver){
-        embed.setDescription("Game Over! Round winners: "+game.winners.join(", "));
+        embed.setDescription("**Game Over**! Round winners: **"+game.winners.join(", ")+"**");
     }else{
         embed.setDescription("Turn of: "+game.players[`${game.turnOf}`].username);
     }
     for(let p in game.players){
         const player = game.players[p];
         const playerCardsRender: string[] = [];
-        player.cards.map(c => playerCardsRender.push(`${c.type}${c.value}`)); 
+        player.cards.map(c => playerCardsRender.push(`\`${c.type}${c.value}\``)); 
         const sufix: string = (player.busted)?"(Estourou)":"";
         embed.addField(player.username+sufix, `cards - ${playerCardsRender.join(" ")} \nTotal - \`${player.score}\``);
     }
@@ -129,7 +123,6 @@ function start(game: IGame, timer: NodeJS.Timer){
             player.cards.push(card);
         }
 
-        console.log("Player cards: ", player.cards);
         player.score = cardValue(player.cards);
         if(!player.dealer && game.turnOf == null){
             game.turnOf = p;
@@ -190,6 +183,11 @@ function calculateFinalResults(game: IGame): string[]{
     return winners;
 }
 
+async function updateInteraction(interaction: ButtonInteraction, status: string, embed: MessageEmbed){
+
+}
+
+
 async function execution({ message }:ICommandParams){
 
     // game variables init
@@ -198,11 +196,13 @@ async function execution({ message }:ICommandParams){
     let status: string = "Aguardando jogadores";
     let startTimer = 30000;
     let gameOver: boolean;
+    let shouldUpdate: boolean = true;
 
     const timer = setInterval(()=>{
         startTimer -= 1000;
         if(startTimer <= 1000){
-            console.log("Hora de iniciar o jogo");
+            console.log("Inciando jooj.");
+            clearInterval(timer);
         }
     }, 1000);
 
@@ -279,7 +279,11 @@ async function execution({ message }:ICommandParams){
                     game.players[interaction.user.id].busted = true;
                     gameOver = setTurnToNext(game);
                 }
+                if(game.players[interaction.user.id].score == 21){
+                    gameOver = setTurnToNext(game);
+                }
                 embed = updateEmbed(game, message);
+                shouldUpdate = true;
             },
             "bj_start": function(){
                 if(interaction?.user?.id != message.author.id) return;
@@ -289,26 +293,29 @@ async function execution({ message }:ICommandParams){
                 embed = updateEmbed(game, message);
                 components = gameButtonsRow;
                 status = "Jogo iniciado."
+                shouldUpdate = true;
             },
             "bj_stand": function(){
                 if(interaction.user.id != game.turnOf) return;
                 // check game over
                 game.players[interaction.user.id].stoped = true;
                 gameOver = setTurnToNext(game);
+                shouldUpdate = true;
                 embed = updateEmbed(game, message);
             },
             "bj_cancel": function(){
                 if(interaction.user.id != message.author.id) return;
                 status = "Jogo cancelado";
                 gameButtonsRow.components.map(c=>c.disabled=true);
+                shouldUpdate = true;  
                 components = gameButtonsRow;
             },
             "bj_join": async function(){
                 if(game.started) return;
                 if(interaction?.user?.id == message.author.id || game.players[interaction?.user?.id]){  
-                    if(!interaction.replied){
-                        return;
-                    }
+                    shouldUpdate = false;  
+                    await interaction.reply({ content: "Você ja esta nessa partida.", ephemeral: true });
+                    return;
                 }
 
                 game.players[interaction?.user?.id] = {
@@ -320,6 +327,7 @@ async function execution({ message }:ICommandParams){
                     username: interaction?.user?.username
                 };
 
+                shouldUpdate = true; 
                 embed = preStartEmbed(game, message);
                 status = "Aguardando jogadores..."
                 components = preStartButtonsRow;
@@ -337,7 +345,9 @@ async function execution({ message }:ICommandParams){
             game.winners = calculateFinalResults(game);
             embed = updateEmbed(game, message, gameOver);
         }
-        interaction.update({ content: status, embeds: [embed], components: [components]  });
+        if(shouldUpdate){
+            interaction.update({ content: status, embeds: [embed], components: [components]  });
+        }
     });
     collector.on("end", interaction=>{
         if(!game.started){
