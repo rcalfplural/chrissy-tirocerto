@@ -15,3 +15,12 @@ export interface ICommandParams {
     message: Message;
     args: string[];
 };
+
+
+// LOTERIA
+export interface ILotericaPayload{
+    gameType: string;
+    gameNumber: number;
+    gameDate: string;
+    dezenas: string[];
+};
